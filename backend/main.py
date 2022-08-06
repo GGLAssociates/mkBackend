@@ -20,7 +20,7 @@ app = FastAPI(title="Minecraft Server Backend Endpoints",
     version="0.0.1",
     contact={
         "name": "GGLAssociates",
-        "url": "https://pointerpointer.com/",
+        "url": "https://gglassociates.com",
         "email": "GGLAssociates.Contact@gmail.com",
     },
     license_info={
@@ -282,7 +282,7 @@ def register(request: CreateUser):
         role_id = token['roleId']
         exp = token['exp']
         if exp < int(datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")):
-            return {"message": "Token expired"}
+            return {"message": "User is not an admin"}
         if role_id == RoleID.ADMIN.value:
             try:
                 cur = conn.cursor()
