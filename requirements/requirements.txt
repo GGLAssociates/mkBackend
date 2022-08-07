@@ -4,3 +4,4 @@ python-multipart
 python-jose[cryptography]
 google-cloud-compute
 google-cloud-storage
+google-api-core
