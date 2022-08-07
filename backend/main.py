@@ -127,7 +127,7 @@ def verify_token(req: Request):
     except:
         raise HTTPException(
             status_code=401,
-            detail="Unauthorized, you have not logged in"
+            detail="Unauthorized, you have not logged in or have provided an invalid token"
         )
     role_id = token['roleId']
     # Check if the user has pemission to view the world list
@@ -149,7 +149,7 @@ def read_root():
 """
 
 @app.get("/servers", tags=["World"])
-def servers(
+async def servers(
     role_id: str = Depends(verify_token)):
     auth_users = [RoleID.ADMIN.value, RoleID.VISITOR.value]
     if role_id in auth_users:
@@ -172,7 +172,7 @@ def servers(
         return JSONResponse(status_code=401, content={"error": "You do not have permission to view this list"})
 
 @app.post("/create_server", tags=["World"])
-def create_world(
+async def create_world(
     world: World, 
     role_id: bool = Depends(verify_token)):
     auth_users = [RoleID.ADMIN.value, RoleID.VISITOR.value]
@@ -206,7 +206,7 @@ def create_world(
 """
     
 @app.delete("/world/{world_id}", tags=["World"])
-def delete_world(
+async def delete_world(
     world_id: int, 
     role_id: bool = Depends(verify_token)):
     auth_users = [RoleID.ADMIN.value]
@@ -220,7 +220,9 @@ def delete_world(
         # Get the machine name of the world to be deleted if it exists
         machine_name = cur.execute("SELECT MachineName FROM WorldTable WHERE ID = ?", (world_id)).fetchone()[0]
         # Send a delete request to the pipeline to delete the world
-        # data = pipeline.gcp_integrator(settings_file='./pipeline/settings.conf').delete_instance(machine_name)
+        # pipeline.gcp_integrator(settings_file='./pipeline/settings.conf').delete_instance(machine_name)
+        # Delete the world from the gcp bucket
+        # pipeline.gcp_integrator(settings_file='./pipeline/settings.conf').delete_file('worlds/{machine_name}/world.zip'.format(machine_name=machine_name))
         # Delete the world from the Worlds table if it exists and the user has permission to do so
         cur.execute("DELETE FROM WorldTable WHERE ID = ?", (world_id,))
         conn.commit()
@@ -232,8 +234,8 @@ def delete_world(
     world name: str 
 """
 
-@app.put("/world/{world_id}", tags=["World"])
-def stop_world(
+@app.put("/stop_world/{world_id}", tags=["World"])
+async def stop_world(
     world_id: int, 
     role_id: bool = Depends(verify_token)):
     auth_users = [RoleID.ADMIN.value]
@@ -245,21 +247,21 @@ def stop_world(
         # Create a cursor object
         cur = conn.cursor()
         # Get the machine name of the world to be stopped if it exists
-        machine_name = cur.execute("SELECT MachineName FROM WorldTable WHERE ID = ?", (world_id)).fetchone()[0]
+        # machine_name = cur.execute("SELECT MachineName FROM WorldTable WHERE ID = ?", (world_id)).fetchone()[0]
         # Send a stop request to the pipeline to stop the world
         # data = pipeline.gcp_integrator(settings_file='./pipeline/settings.conf').delete_instance(machine_name)
         # Stop the world in the Worlds table if it exists and the user has permission to do so
         cur.execute("UPDATE WorldTable SET ServerStatus = ? WHERE ID = ?", (ServerStatus.OFF.value, world_id))
         conn.commit()
-        return JSONResponse(status_code=200, content={"message": "World stopped"})
+        return JSONResponse(status_code=200, content={"message": "World stopped", 'success': True})
     else:
         return JSONResponse(status_code=401, content={"message": "You do not have permission to stop this world"})
 
 """ Endpoint to load a Minecraft world from a Google storage bucket
     world_name: str 
 """
-@app.post("/world/{world_id}", tags=["World"])
-def load_world(
+@app.put("/start_world/{world_id}", tags=["World"])
+async def load_world(
     world_id: int, 
     role_id: bool = Depends(verify_token)):
     auth_users = [RoleID.ADMIN.value]
@@ -271,12 +273,12 @@ def load_world(
         # Create a cursor object
         cur = conn.cursor()
         # Get the machine associated with the world, this is the also the world_name to be loaded
-        world_name = cur.execute("SELECT MachineName FROM WorldTable WHERE ID = ?", (world_id)).fetchone()[0]
+        # world_name = cur.execute("SELECT MachineName FROM WorldTable WHERE ID = ?", (world_id)).fetchone()[0]
         # Send a load request to the pipeline to load the world
         # data = pipeline.gcp_integrator(settings_file='./pipeline/settings.conf').load_instance(world_name)
         cur.execute("UPDATE WorldTable SET ServerStatus = ? WHERE ID = ?", (ServerStatus.ON.value, world_id))
         conn.commit()
-        return JSONResponse(status_code=200, content={"message": "World loaded"})
+        return JSONResponse(status_code=200, content={"message": "World loaded", "success": True})
     else:
         return JSONResponse(status_code=401, content={"message": "You do not have permission to load this world"})
 
@@ -289,7 +291,7 @@ def load_world(
 """
 
 @app.post ("/login", tags=["Website"])
-def login(user: User):
+async def login(user: User):
     # Query the database for the username and password
     # UserTable:
     # ID, Username, Password, RoleID
@@ -329,7 +331,7 @@ def login(user: User):
 Create a new user in the database.
 """
 @app.post ("/register", tags=["Website"])
-def register(
+async def register(
     request: CreateUser,
     role_id: bool = Depends(verify_token)):
     auth_users = [RoleID.ADMIN.value]
@@ -359,8 +361,8 @@ def register(
         JSONResponse(status_code=401, content={"message": "You do not have permission to create a user"})
 
 @app.get("/users", tags=["Website"])
-def get_users(role_id: bool = Depends(verify_token)):
-    auth_users = [RoleID.ADMIN.value, RoleID.VISITOR.value]
+async def get_users(role_id: bool = Depends(verify_token)):
+    auth_users = [RoleID.ADMIN.value]
     if role_id in auth_users:
         # Load the database
         database = Path('./sqlite/db/pythonsqlite.db')
@@ -385,7 +387,7 @@ def get_users(role_id: bool = Depends(verify_token)):
 Update the role of a user in the database, via a put request.
 """
 @app.put("/user/{user_id}", tags=["Website"])
-def update_user(user_id: int, request: UpdateUser, role_id: bool = Depends(verify_token)):
+async def update_user(user_id: int, request: UpdateUser, role_id: bool = Depends(verify_token)):
     auth_users = [RoleID.ADMIN.value]
     if role_id in auth_users:
         # Load the database
@@ -413,7 +415,7 @@ def update_user(user_id: int, request: UpdateUser, role_id: bool = Depends(verif
 Delete a user from the database, via a delete request.
 """  
 @app.delete("/user/{user_id}", tags=["Website"])
-def delete_user(user_id: int, role_id: bool = Depends(verify_token)):
+async def delete_user(user_id: int, role_id: bool = Depends(verify_token)):
     auth_users = [RoleID.ADMIN.value]
     if role_id in auth_users:
         # Load the database
