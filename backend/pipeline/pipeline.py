@@ -8,7 +8,7 @@ from google.cloud import compute_v1
 from google.cloud import storage
 from google.api_core.extended_operation import ExtendedOperation
 
-settings_file = "./settings.conf"
+# settings_file = "./settings.conf"
 
 def wait_for_extended_operation(operation: ExtendedOperation, verbose_name: str = "operation", timeout: int = 300) -> Any:
     result = operation.result(timeout=timeout)
@@ -160,7 +160,7 @@ class gcp_integrator:
         return True
 
 
-print(gcp_integrator(settings_file).list_files())
+# print(gcp_integrator(settings_file).list_files())
 
 # print(gcp_integrator(settings_file).create_instance())
 
