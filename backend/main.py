@@ -1,16 +1,12 @@
-import ipaddress
 from typing import Union
 from fastapi import FastAPI, HTTPException, Depends, Request
 from pydantic import BaseModel
-import sqlite3
 import hashlib
 from utils.utils import create_connection, create_table, insert_user, verbose_exception_message
 from jose import jwt
 import datetime 
 from fastapi.responses import JSONResponse
 from pathlib import Path
-import sys 
-import traceback
 from fastapi.middleware.cors import CORSMiddleware
 import os
 from enum import Enum
@@ -218,7 +214,7 @@ async def delete_world(
         # Create a cursor object
         cur = conn.cursor()
         # Get the machine name of the world to be deleted if it exists
-        machine_name = cur.execute("SELECT MachineName FROM WorldTable WHERE ID = ?", (world_id)).fetchone()[0]
+        # machine_name = cur.execute("SELECT MachineName FROM WorldTable WHERE ID = ?", (world_id)).fetchone()[0]
         # Send a delete request to the pipeline to delete the world
         # pipeline.gcp_integrator(settings_file='./pipeline/settings.conf').delete_instance(machine_name)
         # Delete the world from the gcp bucket
@@ -226,7 +222,7 @@ async def delete_world(
         # Delete the world from the Worlds table if it exists and the user has permission to do so
         cur.execute("DELETE FROM WorldTable WHERE ID = ?", (world_id,))
         conn.commit()
-        return JSONResponse(status_code=200, content={"message": "World deleted"})
+        return JSONResponse(status_code=200, content={"message": "World deleted", "success":True})
     else:
         return JSONResponse(status_code=401, content={"message": "You do not have permission to delete this world"})
 
