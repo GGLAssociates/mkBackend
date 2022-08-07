@@ -121,32 +121,10 @@ def startup_event():
         # Close the connection
         conn.close()
 
-def verify_token_admin(req: Request):
-    token = req.headers["token"]
-    token = jwt.decode(token, SECRET, algorithms=['HS256'])
-    role_id = token['roleId']
-    exp = token['exp']
-    if exp < int(datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")):
-        return {"message": "Token expired"}
-    
-    # Check if the user has pemission to view the world list
-    if role_id == RoleID.ADMIN.value:
-        valid = True
-    if not valid:
-        raise HTTPException(
-            status_code=401,
-            detail="Unauthorized"
-        )
-    return True
-
 def verify_token(req: Request):
     token = req.headers["token"]
     token = jwt.decode(token, SECRET, algorithms=['HS256'])
     role_id = token['roleId']
-    exp = token['exp']
-    if exp < int(datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")):
-        return {"message": "Token expired"}
-    
     # Check if the user has pemission to view the world list
     if role_id in set(item.value for item in RoleID):
         valid = True
@@ -155,7 +133,7 @@ def verify_token(req: Request):
             status_code=401,
             detail="Unauthorized"
         )
-    return req, True
+    return role_id
     
 @app.get("/", tags=["Main"])
 def read_root():
@@ -166,8 +144,10 @@ def read_root():
 """
 
 @app.get("/servers", tags=["World"])
-def servers(authorized = Depends(verify_token)):
-    if authorized:
+def servers(
+    role_id: str = Depends(verify_token)):
+    auth_users = [RoleID.ADMIN.value, RoleID.VISITOR.value]
+    if role_id in auth_users:
         """
         List all worlds in the database
         """
@@ -187,25 +167,22 @@ def servers(authorized = Depends(verify_token)):
         return JSONResponse(status_code=401, content={"error": "You do not have permission to view this list"})
 
 @app.post("/create_server", tags=["World"])
-def create_world(authorised: bool = Depends(verify_token)):
-    
-    # Local database location
-    database = Path('./sqlite/db/pythonsqlite.db')
-    # Connect to the local SQLite database
-    conn = create_connection(database)
-    # Insert the new world into the Worlds table if it doesn't already exist and the user has permission to do so
-    ipAddress = '1.1.1.1'
-    if authorised:
+def create_world(
+    world: World, 
+    role_id: bool = Depends(verify_token)):
+    auth_users = [RoleID.ADMIN.value, RoleID.VISITOR.value]
+    if role_id in auth_users:
+        # Local database location
+        database = Path('./sqlite/db/pythonsqlite.db')
+        # Connect to the local SQLite database
+        conn = create_connection(database)
+        # Insert the new world into the Worlds table if it doesn't already exist and the user has permission to do so
+        data = gcp.create_instance()
         try:
             cur = conn.cursor()
             # Insert the new world into the Worlds table with the ID of the next available ID, if an ID exists
-            cur.execute("SELECT ID FROM WorldTable ORDER BY ID DESC LIMIT 1")
-            if cur.fetchone():
-                ID = cur.fetchone()[0] + 1
-                cur.execute("INSERT INTO WorldTable (ID, WorldName, IPAddress, ServerStatus) VALUES (?, ?, ?, ?)", (ID, world.worldName, ipAddress, ServerStatus.PENDING.value))
-            else:
-                ID = 1
-                cur.execute("INSERT INTO WorldTable (ID, WorldName, IPAddress, ServerStatus) VALUES (?, ?, ?, ?)", (ID, world.worldName, ipAddress, ServerStatus.PENDING.value))
+            cur.execute("INSERT INTO WorldTable (WorldName, IPAddress, ServerStatus) VALUES (?, ?, ?)", (world.worldName, ipAddress, ServerStatus.PENDING.value))
+            ID = cur.lastrowid
             conn.commit()
             # Return the new world's ID, name
             return {"id": ID, "name": world.worldName, "ipAddress": ipAddress, "serverStatus": ServerStatus.PENDING.value}
@@ -220,7 +197,7 @@ def create_world(authorised: bool = Depends(verify_token)):
 """
     
 @app.post("/delete_world", tags=["World"])
-def delete_world(request: World):
+def delete_world(authorised: bool = Depends(verify_token)):
     # Local database location
     database = Path('./sqlite/db/pythonsqlite.db')
     # Connect to the local SQLite database
@@ -255,7 +232,7 @@ def delete_world(request: World):
 """
 
 @app.post("/restart_world", tags=["World"])
-def restart_world(request: World):
+def restart_world(authorised: bool = Depends(verify_token)):
     # Local database location
     database = Path('./sqlite/db/pythonsqlite.db')
     # Connect to the local SQLite database
