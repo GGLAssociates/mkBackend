@@ -1,9 +1,10 @@
+import ipaddress
 from typing import Union
-from fastapi import FastAPI, Form
+from fastapi import FastAPI, HTTPException, Depends, Request
 from pydantic import BaseModel
 import sqlite3
 import hashlib
-from utils.utils import create_connection, create_table, insert_user
+from utils.utils import create_connection, create_table, insert_user, verbose_exception_message
 from jose import jwt
 import datetime 
 from fastapi.responses import JSONResponse
@@ -13,8 +14,13 @@ import traceback
 from fastapi.middleware.cors import CORSMiddleware
 import os
 from enum import Enum
+import json
+
 
 SECRET = os.environ.get('SECRET')
+
+
+
 app = FastAPI(title="Minecraft Server Backend Endpoints",
     description="Endpoints for the GGLAssociates MK Minecraft Server Backend API",
     version="0.0.1",
@@ -41,12 +47,8 @@ class RoleID(Enum):
     VISITOR = 2
     
 
-class CreateWorld(BaseModel):
+class World(BaseModel):
     worldName: str
-    ipAddress: str
-    token: str
-    
-
 class User(BaseModel):
     username: str
     password: str
@@ -109,13 +111,49 @@ def startup_event():
         # Create Worlds table
         
         sql_create_worlds_table = """ 
-        CREATE TABLE IF NOT EXISTS WorldTable (ID INTEGER PRIMARY KEY, WorldName varchar(255));
+        CREATE TABLE IF NOT EXISTS WorldTable (ID INTEGER PRIMARY KEY, WorldName varchar(255), ServerStatus INTEGER);
         """
         create_table(conn, sql_create_worlds_table)
         
         # Close the connection
         conn.close()
-        
+
+def verify_token_admin(req: Request):
+    token = req.headers["token"]
+    token = jwt.decode(token, SECRET, algorithms=['HS256'])
+    role_id = token['roleId']
+    exp = token['exp']
+    if exp < int(datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")):
+        return {"message": "Token expired"}
+    
+    # Check if the user has pemission to view the world list
+    if role_id == RoleID.ADMIN.value:
+        valid = True
+    if not valid:
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized"
+        )
+    return True
+
+def verify_token(req: Request):
+    token = req.headers["token"]
+    token = jwt.decode(token, SECRET, algorithms=['HS256'])
+    role_id = token['roleId']
+    exp = token['exp']
+    if exp < int(datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")):
+        return {"message": "Token expired"}
+    
+    # Check if the user has pemission to view the world list
+    if role_id in set(item.value for item in RoleID):
+        valid = True
+    if not valid:
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized"
+        )
+    return req, True
+    
 @app.get("/", tags=["Main"])
 def read_root():
     return {"Hello": "World"}
@@ -124,73 +162,125 @@ def read_root():
     world_name: str 
 """
 
-@app.post("/create_world", tags=["World"])
-def create_world(request: CreateWorld):
+@app.get("/servers", tags=["World"])
+def servers(authorized = Depends(verify_token)):
+    if authorized:
+        """
+        List all worlds in the database
+        """
+        database = Path('./sqlite/db/pythonsqlite.db')
+        # Connect to the local SQLite database
+        conn = create_connection(database)
+        # Create a cursor object
+        cur = conn.cursor()
+        # Get all worlds from the database
+        cur.execute("SELECT * FROM WorldTable")
+        rows = cur.fetchall()
+        worlds = []
+        for row in rows:
+            worlds.append({"ID":row[0],"worldName": row[1], "ipAddress": row[2], "serverStatus": row[3]})
+        return JSONResponse(status_code=200, content=json.dumps(worlds)) 
+    else:
+        return JSONResponse(status_code=401, content={"error": "You do not have permission to view this list"})
+
+@app.post("/create_server", tags=["World"])
+def create_world(authorised: bool = Depends(verify_token)):
+    
     # Local database location
     database = Path('./sqlite/db/pythonsqlite.db')
     # Connect to the local SQLite database
     conn = create_connection(database)
     # Insert the new world into the Worlds table if it doesn't already exist and the user has permission to do so
-    if request.token != None:
-        # Check if the user is an admin
-        token = jwt.decode(request.token, SECRET, algorithms=['HS256'])
-        role_id = token['roleId']
-        exp = token['exp']
-        if exp < int(datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")):
-            return {"message": "Token expired"}
-        if role_id == RoleID.ADMIN.value:
-            try:
-                # Check if the world already exists
-                cur = conn.cursor()
-                cur.execute("SELECT WorldName FROM WorldTable WHERE WorldName = ?", (request.worldName,))
-                if cur.fetchone():
-                    return {"message": "World exists with this name, please choose another name"}
-                else:
-                    # Insert the new world into the Worlds table with the ID of the next available ID, if an ID exists
-                    cur.execute("SELECT ID FROM WorldTable ORDER BY ID DESC LIMIT 1")
-                    if cur.fetchone():
-                        ID = cur.fetchone()[0] + 1
-                        cur.execute("INSERT INTO WorldTable (ID, WorldName, IPAddress, ServerStatus) VALUES (?, ?, ?, ?)", (ID, request.worldName, request.ipAddress, ServerStatus.PENDING.value))
-                    else:
-                        ID = 1
-                        cur.execute("INSERT INTO WorldTable (ID, WorldName, IPAddress, ServerStatus) VALUES (?, ?, ?, ?)", (ID, request.worldName, request.ipAddress, ServerStatus.PENDING.value))
-                    conn.commit()
-                    # Return the new world's ID, name
-                    return {"id": ID, "name": request.worldName, "ipAddress": request.ipAddress, "serverStatus": ServerStatus.PENDING.value}
-            except Exception as e:
-                # Get current system exception
-                ex_type, ex_value, ex_traceback = sys.exc_info()
-
-                # Extract unformatter stack traces as tuples
-                trace_back = traceback.extract_tb(ex_traceback)
-
-                # Format stacktrace
-                stack_trace = list()
-
-                for trace in trace_back:
-                    stack_trace.append("File : %s , Line : %d, Func.Name : %s, Message : %s" % (trace[0], trace[1], trace[2], trace[3]))
-
-                print("Exception type : %s " % ex_type.__name__)
-                print("Exception message : %s" %ex_value)
-                print("Stack trace : %s" %stack_trace)
-                return {"message": "Exception occured, Error: " + repr(e)}
+    ipAddress = '1.1.1.1'
+    if authorised:
+        try:
+            cur = conn.cursor()
+            # Insert the new world into the Worlds table with the ID of the next available ID, if an ID exists
+            cur.execute("SELECT ID FROM WorldTable ORDER BY ID DESC LIMIT 1")
+            if cur.fetchone():
+                ID = cur.fetchone()[0] + 1
+                cur.execute("INSERT INTO WorldTable (ID, WorldName, IPAddress, ServerStatus) VALUES (?, ?, ?, ?)", (ID, world.worldName, ipAddress, ServerStatus.PENDING.value))
+            else:
+                ID = 1
+                cur.execute("INSERT INTO WorldTable (ID, WorldName, IPAddress, ServerStatus) VALUES (?, ?, ?, ?)", (ID, world.worldName, ipAddress, ServerStatus.PENDING.value))
+            conn.commit()
+            # Return the new world's ID, name
+            return {"id": ID, "name": world.worldName, "ipAddress": ipAddress, "serverStatus": ServerStatus.PENDING.value}
+        except Exception as e:
+            verbose_exception_message()
+            return {"message": "Exception occured, Error: " + repr(e)}
+    else:
+        return JSONResponse(status_code=401, content={"message": "You do not have permission to create a world"})
 
 """ Endpoint to delete a Minecraft world
     world name: str 
 """
     
-@app.post("/delete_world/{world_name}", tags=["World"])
-def delete_world(world_name: str):
-    
-    return {"world_name": world_name}
-
+@app.post("/delete_world", tags=["World"])
+def delete_world(request: World):
+    # Local database location
+    database = Path('./sqlite/db/pythonsqlite.db')
+    # Connect to the local SQLite database
+    conn = create_connection(database)
+    # Delete the world from the Worlds table if it exists and the user has permission to do so
+    # Check if the user is an admin
+    token = jwt.decode(request.token, SECRET, algorithms=['HS256'])
+    role_id = token['roleId']
+    exp = token['exp']
+    if exp < int(datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")):
+        return {"message": "Token expired"}
+    if role_id == RoleID.ADMIN.value:
+        try:
+            # Check if the world exists
+            cur = conn.cursor()
+            cur.execute("SELECT WorldName FROM WorldTable WHERE WorldName = ?", (request.worldName,))
+            if cur.fetchone():
+                # Delete the world from the Worlds table
+                cur.execute("DELETE FROM WorldTable WHERE WorldName = ?", (request.worldName,))
+                conn.commit()
+                return {"message": "World deleted"}
+            else:
+                return {"message": "World does not exist"}
+        except Exception as e:
+            verbose_exception_message()
+            return {"message": "Exception occured, Error: " + repr(e)}
+    else:
+        return JSONResponse(status_code=401, content={"message": "You do not have permission to delete a world"})
+        
 """ Endpoint to restart a Minecraft world
     world_name: str 
 """
 
-@app.post("/restart_world/{world_name}", tags=["World"])
-def restart_world(world_name: str):
-    return {"world_name": world_name}
+@app.post("/restart_world", tags=["World"])
+def restart_world(request: World):
+    # Local database location
+    database = Path('./sqlite/db/pythonsqlite.db')
+    # Connect to the local SQLite database
+    conn = create_connection(database)
+    # Restart the world if it exists and the user has permission to do so
+    # Check if the user is an admin
+    token = jwt.decode(request.token, SECRET, algorithms=['HS256'])
+    role_id = token['roleId']
+    exp = token['exp']
+    if exp < int(datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")):
+        return {"message": "Token expired"}
+    if role_id == RoleID.ADMIN.value:
+        try:
+            # Check if the world exists
+            cur = conn.cursor()
+            cur.execute("SELECT WorldName FROM WorldTable WHERE WorldName = ?", (request.worldName,))
+            if cur.fetchone():
+                # Restart the world
+                cur.execute("UPDATE WorldTable SET ServerStatus = ? WHERE WorldName = ?", (ServerStatus.PENDING_DOWN.value, request.worldName))
+                conn.commit()
+                return {"message": "World restarted"}
+            else:
+                return {"message": "World does not exist"}
+        except Exception as e:
+            verbose_exception_message()
+            return {"message": "Exception occured, Error: " + repr(e)}
+    else:
+        JSONResponse(status_code=401, content={"message": "You do not have permission to restart a world"})
 
 """ Endpoint to stop a Minecraft world
     world name: str 
@@ -252,21 +342,7 @@ def login(user: User):
         else:
             return {"message": "Password incorrect"}
     except Exception as e:
-        # Get current system exception
-        ex_type, ex_value, ex_traceback = sys.exc_info()
-
-        # Extract unformatter stack traces as tuples
-        trace_back = traceback.extract_tb(ex_traceback)
-
-        # Format stacktrace
-        stack_trace = list()
-
-        for trace in trace_back:
-            stack_trace.append("File : %s , Line : %d, Func.Name : %s, Message : %s" % (trace[0], trace[1], trace[2], trace[3]))
-
-        print("Exception type : %s " % ex_type.__name__)
-        print("Exception message : %s" %ex_value)
-        print("Stack trace : %s" %stack_trace)
+        verbose_exception_message()
         return {"message": "Password incorrect, Error: " + repr(e)}
 """
 Create a new user in the database.
@@ -299,21 +375,7 @@ def register(request: CreateUser):
                     conn.commit()
                     return {"message": "User created"}
             except Exception as e:
-                # Get current system exception
-                ex_type, ex_value, ex_traceback = sys.exc_info()
-
-                # Extract unformatter stack traces as tuples
-                trace_back = traceback.extract_tb(ex_traceback)
-
-                # Format stacktrace
-                stack_trace = list()
-
-                for trace in trace_back:
-                    stack_trace.append("File : %s , Line : %d, Func.Name : %s, Message : %s" % (trace[0], trace[1], trace[2], trace[3]))
-
-                print("Exception type : %s " % ex_type.__name__)
-                print("Exception message : %s" %ex_value)
-                print("Stack trace : %s" %stack_trace)
+                verbose_exception_message()
                 return {"message": "Exception occured, Error: " + repr(e)}
 
         
