@@ -15,8 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 from enum import Enum
 import json
-import jwt
-
+from pipeline.pipeline import gcp_integrator as gcp
 
 SECRET = os.environ.get('SECRET')
 
