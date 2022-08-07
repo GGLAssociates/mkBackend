@@ -15,11 +15,10 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 from enum import Enum
 import json
+import jwt
 
 
 SECRET = os.environ.get('SECRET')
-
-
 
 app = FastAPI(title="Minecraft Server Backend Endpoints",
     description="Endpoints for the GGLAssociates MK Minecraft Server Backend API",
@@ -68,6 +67,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def validate(jwt, role):
+    jwt.decode(jwt, SECRET, algorithms=["HS256"])
 
 @app.on_event("startup")
 def startup_event():
